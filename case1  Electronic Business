@@ -1,0 +1,391 @@
+import pandas as pd
+from datetime import datetime
+import numpy as np
+import matplotlib.pyplot as plt
+
+### 一、数据清洗
+
+df_od = pd.read_csv('orders.csv')
+
+df_od.info()
+
+df_od.买家实际支付积分.value_counts()
+
+orders=df_od.loc[:,['订单编号','买家会员名','买家实际支付金额','收货地址','宝贝种类',
+                '宝贝总数量']]
+orders.head()
+
+orders['收货地址'] = orders['收货地址'].apply(lambda x:x.split()[0])
+
+orders.head()
+
+demo = ['a','b','c','a']
+list(enumerate(demo))
+
+for x,y in enumerate(demo):
+    print(x,y)
+
+add = orders['收货地址'].unique()
+add
+
+list(enumerate(add))
+
+#构建省份与编码的映射字典
+add_dict = {y:x for x,y in enumerate(add)}
+add_dict
+
+#将每一个地址都映射为编码
+orders.收货地址 = orders.收货地址.map(add_dict)
+orders.head()
+
+df_io = pd.read_csv('Items_order.csv')
+
+df_io.head()
+
+items = df_io.loc[:,['订单编号','标题','价格','购买数量']]
+items.head()
+
+df_ia = pd.read_csv(r'Items_attribute.csv')
+
+df_ia.head()
+
+df_attr = df_ia.loc[:,['标题','适用年龄']]
+df_attr.head()
+
+df_attr.适用年龄.isnull().value_counts()
+
+df_attr.适用年龄.fillna('空',inplace = True)
+df_attr.info()
+
+df_attr.适用年龄.value_counts()
+
+#定义标签:适用年龄
+def addtag(x):
+    tag = ''
+    if '月' in x:
+        tag +='婴儿,'
+    if ',2岁' in x or ',3岁' in x or ',4岁' in x:
+        tag +='幼儿,'
+    if '5岁' in x or '6岁' in x or '7岁' in x:
+        tag +='学前,'
+    if '空' in x:
+        tag +='空'
+    if '8岁' in x or '9岁' in x or '10岁' in x or '11岁' in x or '12岁' in x or '14岁' in x or '13岁' in x:
+        tag +='小学生,'
+    return tag
+
+df_attr['tag'] = ''
+
+df_attr['tag'] = df_attr.适用年龄.apply(addtag)
+df_attr.head()
+
+### 表格合并分析
+
+io_ia = pd.merge(items,df_attr,on = '标题',how = 'inner')
+io_ia.head()
+
+io_ia.drop('适用年龄',inplace = True,axis = 1)
+
+io_ia.head()
+
+io_ia.info()
+
+result = io_ia.loc[:,['订单编号','tag','购买数量']]
+
+result1 = result.groupby(['订单编号','tag']).sum()
+
+result1.head()
+
+r2 = result1.unstack('tag').fillna(0)
+r2.head()
+
+r3 = pd.merge(orders,r2,on = '订单编号',how = 'inner')
+r3.head()
+
+r4 = r3.copy()
+r4['购买次数'] = 0
+users_counts = r4.loc[:,['买家会员名','购买次数']].groupby('买家会员名').count()
+
+users_counts.head()
+
+r6 = r3.copy()
+r6.head()
+
+r7 = r6.groupby('买家会员名').mean()
+
+r7.head()
+
+r8 = r7.loc[:,['收货地址','宝贝种类']]
+
+r9=r6.groupby('买家会员名').sum()
+del r9['订单编号']
+del r9['收货地址']
+del r9['宝贝种类']
+
+users_data = pd.merge(r8,r9,on = '买家会员名',how = 'inner')
+users_data.head()
+
+data_cleaned = pd.merge(users_data,users_counts,on = '买家会员名',how = 'inner')
+data_cleaned.head()
+
+### 数据标准化
+
+#数据标准化
+from sklearn.preprocessing import MinMaxScaler
+mms = MinMaxScaler()
+x_standard = mms.fit_transform(data_cleaned.values)
+
+x_standard
+
+### 最优k值的选择
+
+from sklearn.cluster import KMeans
+
+#肘部法则   sse误差平方和
+sse = []
+for i in range(1,10):
+    algo_km = KMeans(n_clusters = i,random_state = 1)
+    algo_km.fit(x_standard)
+    sse.append(algo_km.inertia_)
+
+import matplotlib.pyplot as plt
+
+plt.plot(range(1,10),sse, 'o-')
+
+#### 手肘法的核心思想是：随着聚类数k的增大，样本划分会更加精细，每个簇的聚合程度会逐渐提高，那么误差平方和SSE自然会逐渐变小。并且，当k小于真实聚类数时，由于k的增大会大幅增加每个簇的聚合程度，故SSE的下降幅度会很大，而当k到达真实聚类数时，再增加k所得到的聚合程度回报会迅速变小，所以SSE的下降幅度会骤减，然后随着k值的继续增大而趋于平缓，也就是说SSE和k的关系图是一个手肘的形状，而这个肘部对应的k值就是数据的真实聚类数。
+
+
+#肘部法则不能得出最优K值
+
+#轮廓系数法
+
+from sklearn.metrics import silhouette_score
+
+algo_km.labels_
+
+silhouette_score(x_standard,algo_km.labels_,random_state = 1)
+
+coe= []
+for i in range(2,10):
+    algo_km = KMeans(n_clusters = i,random_state = 1)
+    km_res = algo_km.fit(x_standard)
+    sco = silhouette_score(x_standard,algo_km.labels_,random_state = 1)
+    coe.append(sco)
+
+plt.plot(range(2,10),coe,'o-')
+
+#### 求出所有样本的轮廓系数后再求平均值就得到了平均轮廓系数。平均轮廓系数的取值范围为[-1,1]，且簇内样本的距离越近，簇间样本距离越远，平均轮廓系数越大，聚类效果越好。那么，很自然地，平均轮廓系数最大的k便是最佳聚类数。
+
+#通过轮廓系数法确定左右K值为4
+km = KMeans(n_clusters = 4,random_state=1)
+predictions = km.fit(x_standard)
+
+km.labels_
+
+#聚类
+data_cleaned['类别'] = km.labels_
+data_cleaned.reset_index(inplace = True)
+user_cluster = data_cleaned.loc[:,['买家会员名','类别']]
+user_cluster.head()
+
+
+
+### 推荐
+
+#1、构建买家对宝贝的喜好度表
+#2、构建每个宝贝在每一类下的喜好度表
+#3、筛选并构建每一个买家没有购买过的宝贝列表
+
+#1、构建买家对宝贝的喜好度表
+orders_items = pd.merge(df_od,df_io,on = '订单编号')
+
+orders_items_attrs = pd.merge(orders_items,df_ia,on = '标题')
+
+user_items = orders_items_attrs.loc[:,['买家会员名','宝贝ID']]
+user_items.head()
+
+user_items['购买次数'] = 0
+
+user_items_freq = user_items.groupby(['买家会员名','宝贝ID']).count().reset_index()
+user_items_freq.head()
+
+#2、构建每个宝贝在每一类下的喜好度表
+user_cluster.head()
+
+user_items_freq_cluster = pd.merge(user_items_freq,user_cluster,how = 'left',on = '买家会员名')
+
+user_items_freq_cluster.head()
+
+user_items_freq_cluster.买家会员名 = user_items_freq_cluster.买家会员名.apply(lambda x:str(x))
+
+cluster_item_freq=user_items_freq_cluster.groupby(['类别','宝贝ID']).mean().reset_index()
+
+cluster_item_freq.head()
+
+user_items_freq_cluster = user_items_freq_cluster.groupby(['类别','宝贝ID']).mean().reset_index()
+user_items_freq_cluster.head()
+
+#筛选并构建每一个买家没有购买过的宝贝列表
+
+user_items_freq.head()
+
+len(user_items_freq.宝贝ID.value_counts())
+
+user_items_freq.groupby(['买家会员名','宝贝ID']).mean().head()
+
+user_items_freq_pivot = user_items_freq.pivot_table(index = '买家会员名',columns = '宝贝ID',values = '购买次数').fillna(0)
+user_items_freq_pivot.head()
+
+user_items_all = user_items_freq_pivot.stack().reset_index()
+user_items_all.head()
+
+user_items_all.rename(columns = {0:'购买次数'},inplace = True)
+user_items_all.head()
+
+user_notbuy = user_items_all[user_items_all.购买次数 == 0]
+user_notbuy.head()
+
+user_notbuy.drop('购买次数',axis = 1,inplace = True)
+user_notbuy.head()
+
+user_cluster_notbuy = pd.merge(user_notbuy,user_cluster,on = '买家会员名',how = 'left')
+user_cluster_notbuy.head()
+
+#推荐
+notbuy_freq=pd.merge(user_cluster_notbuy,cluster_item_freq,how='left',on=['宝贝ID','类别'])
+
+notbuy_freq.sort_values(by = ['买家会员名','购买次数'],ascending = False)
+
+def get_topk(group,k):
+    group_sort = group.sort_values('购买次数',ascending = False)
+    topk = group_sort[:k]
+    return topk
+
+rec_topk = notbuy_freq.groupby('买家会员名').apply(get_topk,k=10)
+rec_topk.head()
+
+rec_topk.index = rec_topk.index.droplevel(1)
+
+del rec_topk['买家会员名']
+
+rec_topk.head()
+
+rec_topk.to_csv(r'rec_top10.csv',encoding='gbk')
+
+### 基于用户的协同过滤
+
+user_items_freq.head()
+
+matrix_score = user_items_freq.pivot_table(index = '买家会员名',columns = '宝贝ID',values = '购买次数')
+matrix_score.head()
+
+from sklearn.metrics.pairwise import pairwise_distances
+
+freq_Matrix = matrix_score.fillna(0).values
+freq_Matrix
+
+#用户间的相似度矩阵,pairwise_distances方法构造
+user_sim = pairwise_distances(freq_Matrix,metric = 'cosine')
+user_sim
+
+#第21个客户和其他所有客户相似度
+user_sim[20,:]
+np.argsort(user_sim[20,:])[-(10+1):-1] 
+#argsort()函数是将x中的元素从小到大排列，提取其对应的index(索引)，然后输出到y
+
+#除掉自己以外的最相似的10个用户的index（买家会员名）
+user_sim_top10 = np.argsort(user_sim)[:,-(10+1):-1]
+user_sim_top10
+
+### 预测所有用户没有购买过的物品的喜好度
+
+#发现user1没有购买过item1，现在预测user1对item1的喜好度
+freq_Matrix[1,:] #用户1对所有商品的喜好度
+
+#找到user1的top10的邻居
+np.argsort(user_sim[1,:])[-(10+1):-1]
+
+#找到每个用户对物品1的喜好度表
+freq_Matrix[:,1]
+
+#topk 求评分
+for j in np.argsort(user_sim[1,:])[-(10+1):-1]:
+    if freq_Matrix[:,1][j] != 0:
+        #对邻居进行均值化处理
+        user_j_action = freq_Matrix[j,:]
+        #numpy求和是去除空值求和
+        user_j_mean = np.sum(user_j_action)/user_j_action[user_j_action != 0].size
+        fenzi += user_sim[1,:][j]*(freq_Matrix[:,1][j] - user_j_mean)
+        fenmu += user_sim[1,:][j]
+        #不均值化处理直接用
+        #fenzi += user_sim[1,:][j]*(freq_Matrix[:,1][j])
+        #fenmu += user_sim[1,:][j]
+
+#定义一个预测物品喜好度的函数
+#给定任何一个userid 和 itemid，均可根据topk的user预测出该user对该物品的喜好度
+def Pre_score(uid,iid,similar,freq_Matrix,k=10):
+    #找到user(uid)的top10的邻居
+    uid_topk = np.argsort(similar[uid,:])[-(10+1):-1]
+    #找到每个用户对物品iid的喜好度表
+    iid_action = freq_Matrix[:,iid]
+    fenzi = 0
+    fenmu = 0
+    
+    for j in uid_topk:
+        #只要我的邻居对物品iid的喜好度不为0，就参与喜好度预测
+        if freq_Matrix[:,1][j] != 0:
+            #对邻居进行均值化处理
+            user_j_action = freq_Matrix[j,:]
+            #numpy求和是去除空值求和
+            user_j_mean = np.sum(user_j_action)/user_j_action[user_j_action != 0].size
+            fenzi += similar[uid,:][j]*(freq_Matrix[:,iid][j] - user_j_mean)
+            fenmu += similar[uid,:][j]
+            #不均值化处理直接用：
+            #fenzi += user_sim[1,:][j]*(freq_Matrix[:,1][j])
+            #fenmu += user_sim[1,:][j]
+    if fenmu == 0:
+        return 0
+    else:
+        uid_action = freq_Matrix[uid,:]
+        uid_mean = np.sum(uid_action)/uid_action[uid_action!=0].size
+        score = fenzi/fenmu+uid_mean
+        return score
+
+freq_Matrix.shape
+
+user_cnt = freq_Matrix.shape[0]
+item_cnt = freq_Matrix.shape[1]
+
+#得到评分表
+pre_zero = np.zeros((user_cnt,item_cnt))
+for uid in range(user_cnt):
+    for iid in range(item_cnt):
+        if freq_Matrix[uid,iid] == 0:
+            pre_zero[uid,iid] = Pre_score(uid,iid,user_sim,freq_Matrix,k = 10)
+
+rec_df = pd.DataFrame(data = pre_zero,columns = matrix_score.columns,index = matrix_score.index)
+rec_df.head()
+
+rec_df1 = rec_df.stack().reset_index()
+
+rec_df1.rename(columns = {0:'推荐指数'},inplace = True)
+rec_df1.head()
+
+### 推荐
+
+def get_topk(group,k = 10):
+    group_sort = group.sort_values('推荐指数',ascending = False)
+    topk = group_sort[:k]
+    return topk
+
+top10 = rec_df1.groupby('买家会员名').apply(get_topk,k=10)
+
+top10.head()
+
+del top10['买家会员名']
+
+top10.head()
+
+top10.index=top10.index.droplevel(1)
+
+top10.to_csv(r'rec_top10_UBCF.csv',encoding='gbk')
